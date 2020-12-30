@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate glium;
 extern crate cgmath;
+extern crate notify;
 
 mod render_teapot;
 mod shadertoy;

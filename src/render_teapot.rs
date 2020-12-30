@@ -2,6 +2,7 @@ use super::teapot;
 use cgmath::{Matrix4, Vector4};
 use glium::implement_vertex;
 
+#[allow(dead_code)]
 pub fn start() {
     use glium::{glutin, Surface};
 
