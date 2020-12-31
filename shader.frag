@@ -74,8 +74,7 @@ float GetLight(vec3 point, vec3 lightPos) {
 
 void main() {
     vec2 uv = (gl_FragCoord.xy-.5*iResolution.xy)/iResolution.y;
-    /* float camera_speed = 0.1; */
-    float camera_speed = 0.;
+    float camera_speed = 0.1;
     vec3 camera_pos = 2.*vec3(cos(camera_speed * iTime), sin(camera_speed * iTime), 0);
 
     vec3 ray = normalize(vec3(uv.x, uv.y, 1.));
