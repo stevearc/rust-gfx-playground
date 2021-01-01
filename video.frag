@@ -1,5 +1,6 @@
 #version 330
 
+in vec2 v_tex_coords;
 uniform vec3 iResolution; // The viewport resolution (z is pixel aspect ratio, usually 1.0) */
 uniform float iTime; // Current time in seconds
 uniform sampler2D iVideo; // Video texture
@@ -13,9 +14,10 @@ void main() {
     uv.x *= iResolution.z;
 
     // Video source was flipped for some reason
-    uv.y *= -1.0;
+    vec2 tex = v_tex_coords;
+    tex.y *= -1.0;
 
-    vec4 pix = texture(iVideo, uv.xy);
+    vec4 pix = texture(iVideo, tex);
 
     color = vec4(pix.rgb, 1.0);
 }
