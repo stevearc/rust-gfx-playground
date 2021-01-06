@@ -1,3 +1,8 @@
+use ffmpeg::util::frame::video::Video;
+use ffmpeg::{
+    format::Pixel,
+    software::scaling::{Context, Flags},
+};
 use glium::{
     glutin::event::{ElementState, VirtualKeyCode},
     implement_vertex,
@@ -11,6 +16,11 @@ use std::sync::mpsc::*;
 use std::thread;
 use std::time::*;
 
+use self::filters::ConnectedComponent;
+#[allow(unused_imports)]
+use self::filters::{bgsub, blur, denoise, edges, find_objects, pixelate};
+
+mod filters;
 mod shaders;
 mod video;
 
@@ -25,7 +35,7 @@ pub fn start() {
     let (tx, rx) = channel();
 
     thread::spawn(move || {
-        let filename = Path::new("POISONS.mp4");
+        let filename = Path::new("Bliss Dance - Nicky Evers.mp4");
         let result = video::load_video(&filename, tx);
         if result.is_err() {
             println!("Error loading video: {:?}", result.err().unwrap());
@@ -70,96 +80,136 @@ pub fn start() {
         Path::new("video.frag"),
     )
     .unwrap();
+    let mut obj_prog_handle = shaders::ProgramHandle::load_and_watch(
+        &display,
+        Path::new("obj.vert"),
+        Path::new("obj.frag"),
+    )
+    .unwrap();
 
     let frame = rx.recv().unwrap();
-    let mut image_cache = CachedGLValue::new(
-        &display,
-        &frame,
-        Box::new(|display: &glium::Display, frame: &ffmpeg::frame::Video| {
-            let image = glium::texture::RawImage2d::from_raw_rgb(
-                frame.data(0).to_vec(),
-                (frame.width(), frame.height()),
-            );
-            glium::texture::Texture2d::new(display, image).unwrap()
-        }),
-    );
-    let mut split_screen = false;
+    let mut processor = ImageProcessor::new(frame.width(), frame.height()).unwrap();
+    let mut split_screen = true;
     let mut fullscreen = false;
 
     event_loop.run(move |ev, _, control_flow| {
+        let frame_start = now.elapsed().as_micros();
         program_handle.poll(&display);
+        obj_prog_handle.poll(&display);
         if let Ok(new_frame) = rx.try_recv() {
-            image_cache.update(&display, &new_frame);
-        }
-        let video_texture = &image_cache.cached;
+            let image = glium::texture::RawImage2d::from_raw_rgb(
+                new_frame.data(0).to_vec(),
+                (new_frame.width(), new_frame.height()),
+            );
+            let video_texture = glium::texture::Texture2d::new(&display, image).unwrap();
 
-        let mut target = display.draw();
-        target.clear_color(0.0, 0.0, 0.0, 1.0);
+            let (components_frame, components) = processor
+                .find_components_with_intermediate_frame(&display, &new_frame)
+                .unwrap();
 
-        let (width, height) = target.get_dimensions();
-        let aspect_ratio = height as f32 / width as f32;
-        let resolution = [width as f32, height as f32, aspect_ratio];
-        let program = program_handle.as_program();
-        if program.is_ok() {
-            let prog = program.unwrap();
-
-            if split_screen {
-                panel_upper_left.draw(
-                    &mut target,
-                    prog,
-                    &uniform! {
-                        iResolution: resolution,
-                        iTime: now.elapsed().as_secs_f32(),
-                        iVideo: video_texture,
-                    },
-                );
-
-                panel_upper_right.draw(
-                    &mut target,
-                    prog,
-                    &uniform! {
-                        iResolution: resolution,
-                        iTime: now.elapsed().as_secs_f32(),
-                        iVideo: video_texture,
-                    },
-                );
-
-                panel_lower_left.draw(
-                    &mut target,
-                    prog,
-                    &uniform! {
-                        iResolution: resolution,
-                        iTime: now.elapsed().as_secs_f32(),
-                        iVideo: video_texture,
-                    },
-                );
-
-                panel_lower_right.draw(
-                    &mut target,
-                    prog,
-                    &uniform! {
-                        iResolution: resolution,
-                        iTime: now.elapsed().as_secs_f32(),
-                        iVideo: video_texture,
-                    },
-                );
-            } else {
-                main_panel.draw(
-                    &mut target,
-                    prog,
-                    &uniform! {
-                        iResolution: resolution,
-                        iTime: now.elapsed().as_secs_f32(),
-                        iVideo: video_texture,
-                    },
-                );
+            let mut objects = vec![];
+            for component in components {
+                let left = component.left as f32 / new_frame.width() as f32;
+                let right =
+                    (component.left as f32 + component.width as f32) / new_frame.width() as f32;
+                let top = component.top as f32 / new_frame.height() as f32;
+                let bottom =
+                    (component.top as f32 + component.height as f32) / new_frame.height() as f32;
+                // The video is upside down because it goes from top to bottom and GL is from
+                // bottom to top
+                let top = 1f32 - top;
+                let bottom = 1f32 - bottom;
+                // Shift this into the lower left panel
+                let top = top - 1f32;
+                let bottom = bottom - 1f32;
+                let left = left - 1f32;
+                let right = right - 1f32;
+                objects.push(Panel {
+                    vbo: make_square([left, top], [right, bottom], &display).unwrap(),
+                    indices: glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList),
+                });
             }
+
+            let mut target = display.draw();
+            target.clear_color(0.0, 0.0, 0.0, 1.0);
+
+            let (width, height) = target.get_dimensions();
+            let aspect_ratio = height as f32 / width as f32;
+            let resolution = [width as f32, height as f32, aspect_ratio];
+            let program = program_handle.as_program();
+            if program.is_ok() {
+                let prog = program.unwrap();
+
+                if split_screen {
+                    panel_upper_left.draw(
+                        &mut target,
+                        prog,
+                        &uniform! {
+                            iResolution: resolution,
+                            iTime: now.elapsed().as_secs_f32(),
+                            iVideo: &video_texture,
+                        },
+                    );
+
+                    panel_upper_right.draw(
+                        &mut target,
+                        prog,
+                        &uniform! {
+                            iResolution: resolution,
+                            iTime: now.elapsed().as_secs_f32(),
+                            iVideo: &components_frame,
+                        },
+                    );
+
+                    panel_lower_left.draw(
+                        &mut target,
+                        prog,
+                        &uniform! {
+                            iResolution: resolution,
+                            iTime: now.elapsed().as_secs_f32(),
+                            iVideo: &video_texture,
+                        },
+                    );
+
+                    panel_lower_right.draw(
+                        &mut target,
+                        prog,
+                        &uniform! {
+                            iResolution: resolution,
+                            iTime: now.elapsed().as_secs_f32(),
+                            iVideo: &video_texture,
+                        },
+                    );
+
+                    for obj in objects {
+                        obj.draw(
+                            &mut target,
+                            obj_prog_handle.as_program().unwrap(),
+                            &uniform! {
+                                iResolution: resolution,
+                                iTime: now.elapsed().as_secs_f32(),
+                            },
+                        );
+                    }
+                } else {
+                    main_panel.draw(
+                        &mut target,
+                        prog,
+                        &uniform! {
+                            iResolution: resolution,
+                            iTime: now.elapsed().as_secs_f32(),
+                            iVideo: &video_texture,
+                        },
+                    );
+                }
+            }
+
+            target.finish().unwrap();
         }
 
-        target.finish().unwrap();
-
-        // TODO: shouldn't this be variable based on how much work we've done?
-        let next_frame_time = Instant::now() + Duration::from_nanos(16_666_667);
+        let work = now.elapsed().as_micros() - frame_start;
+        let sleep = std::cmp::max(1, 16_666_667 - work);
+        let next_frame_time = Instant::now() + Duration::from_nanos(sleep as u64);
         *control_flow = glutin::event_loop::ControlFlow::WaitUntil(next_frame_time);
         match ev {
             glutin::event::Event::WindowEvent { event, .. } => match event {
@@ -247,22 +297,58 @@ impl Panel {
     }
 }
 
-struct CachedGLValue<T, U> {
-    callback: Box<dyn Fn(&glium::Display, &T) -> U>,
-    cached: U,
+struct ImageProcessor {
+    rgb2bgr_ctx: Context,
+    bgr2rgb_ctx: Context,
 }
 
-impl<T, U> CachedGLValue<T, U> {
-    fn new(
-        display: &glium::Display,
-        value: &T,
-        callback: Box<dyn Fn(&glium::Display, &T) -> U>,
-    ) -> CachedGLValue<T, U> {
-        let cached = callback(display, value);
-        return CachedGLValue { callback, cached };
+impl ImageProcessor {
+    fn new(width: u32, height: u32) -> Result<Self, Box<dyn std::error::Error>> {
+        let rgb2bgr_ctx = Context::get(
+            Pixel::RGB24,
+            width,
+            height,
+            Pixel::BGR24,
+            width,
+            height,
+            Flags::BILINEAR,
+        )?;
+        let bgr2rgb_ctx = Context::get(
+            Pixel::BGR24,
+            width,
+            height,
+            Pixel::RGB24,
+            width,
+            height,
+            Flags::BILINEAR,
+        )?;
+        Ok(ImageProcessor {
+            rgb2bgr_ctx,
+            bgr2rgb_ctx,
+        })
     }
 
-    fn update(&mut self, display: &glium::Display, new_value: &T) {
-        self.cached = (*self.callback)(display, new_value);
+    fn find_components_with_intermediate_frame(
+        &mut self,
+        display: &glium::Display,
+        frame: &ffmpeg::frame::Video,
+    ) -> Result<
+        (glium::texture::Texture2d, Vec<ConnectedComponent>),
+        Box<dyn std::error::Error + 'static>,
+    > {
+        let mut bgr_frame = Video::empty();
+        self.rgb2bgr_ctx.run(&frame, &mut bgr_frame)?;
+
+        let mut components_frame =
+            Video::new(bgr_frame.format(), bgr_frame.width(), bgr_frame.height());
+        let components = find_objects(&bgr_frame, Some(&mut components_frame))?;
+
+        let mut final_frame = Video::empty();
+        self.bgr2rgb_ctx.run(&components_frame, &mut final_frame)?;
+        let image = glium::texture::RawImage2d::from_raw_rgb(
+            final_frame.data(0).to_vec(),
+            (frame.width(), frame.height()),
+        );
+        Ok((glium::texture::Texture2d::new(display, image)?, components))
     }
 }

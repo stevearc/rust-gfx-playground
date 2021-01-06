@@ -12,4 +12,8 @@ edition = "2018"
 glium = "*"
 cgmath = "*"
 notify = "*"
-ffmpeg-next = "*"
+ffmpeg-next = { version = "4.3.8", features = ["build"] }
+opencv = {version = "0.47", features = ["clang-runtime", "opencv-4"]}
+
+[patch.crates-io]
+ffmpeg-sys-next = { path = "../rust-ffmpeg-sys/" }

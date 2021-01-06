@@ -28,8 +28,11 @@ fn load_video_once(filename: &Path, tx: &Sender<Video>) -> Result<(), ffmpeg::Er
         decoder.width(),
         decoder.height(),
         Pixel::RGB24,
-        decoder.width(),
-        decoder.height(),
+        // TODO FIXME make this configurable
+        // decoder.width(),
+        // decoder.height(),
+        640,
+        480,
         Flags::BILINEAR,
     )?;
 
