@@ -1,8 +1,5 @@
 # rust-gfx-playground
 
-* Basic feature detection
-  * Connected component analysis
-  * Overdraw circle objects
 * VFX
   * Sparkle
   * Trails

@@ -21,7 +21,7 @@ use self::filters::ConnectedComponent;
 use self::filters::{bgsub, blur, denoise, edges, find_objects, pixelate};
 
 mod filters;
-mod shaders;
+pub mod shaders;
 mod video;
 
 #[derive(Copy, Clone)]
@@ -74,16 +74,16 @@ pub fn start() {
         indices,
     };
 
-    let mut program_handle = shaders::ProgramHandle::load_and_watch(
+    let mut program_handle = shaders::ProgramHandle::new(
         &display,
-        Path::new("video.vert"),
-        Path::new("video.frag"),
+        Path::new("shaders/video.vert"),
+        Path::new("shaders/video.frag"),
     )
     .unwrap();
-    let mut obj_prog_handle = shaders::ProgramHandle::load_and_watch(
+    let mut obj_prog_handle = shaders::ProgramHandle::new(
         &display,
-        Path::new("obj.vert"),
-        Path::new("obj.frag"),
+        Path::new("shaders/obj.vert"),
+        Path::new("shaders/obj.frag"),
     )
     .unwrap();
 
@@ -91,11 +91,19 @@ pub fn start() {
     let mut processor = ImageProcessor::new(frame.width(), frame.height()).unwrap();
     let mut split_screen = true;
     let mut fullscreen = false;
+    // TODO
+    // let p = ParticleSystem::new().
+    // let particles = vec![ParticleSystemRunner::new(display, ];
 
+    let mut last_frame = Instant::now();
     event_loop.run(move |ev, _, control_flow| {
         let frame_start = now.elapsed().as_micros();
-        program_handle.poll(&display);
-        obj_prog_handle.poll(&display);
+        let delta = last_frame.elapsed().as_secs_f32();
+        last_frame = Instant::now();
+        if cfg!(debug_assertions) {
+            program_handle.poll(&display);
+            obj_prog_handle.poll(&display);
+        }
         if let Ok(new_frame) = rx.try_recv() {
             let image = glium::texture::RawImage2d::from_raw_rgb(
                 new_frame.data(0).to_vec(),

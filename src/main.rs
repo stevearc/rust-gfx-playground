@@ -5,6 +5,7 @@ extern crate ffmpeg_next as ffmpeg;
 extern crate notify;
 
 mod augment;
+mod particles;
 mod render_teapot;
 mod shadertoy;
 mod teapot;
